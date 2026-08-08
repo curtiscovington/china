@@ -1,220 +1,176 @@
 const canvas = document.querySelector('#flag');
-const gl = canvas.getContext('webgl', {
-  alpha: false,
-  antialias: true,
-  powerPreference: 'high-performance',
-});
+const context = canvas.getContext('2d', { alpha: false, desynchronized: true });
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
-if (!gl) {
-  canvas.style.background = '#de2910';
-  canvas.style.opacity = '1';
-  throw new Error('WebGL is not available');
+if (!context) {
+  throw new Error('Canvas 2D is not available');
 }
 
-const vertexSource = `
-  attribute vec2 a_position;
-  attribute vec2 a_uv;
+const texture = document.createElement('canvas');
+texture.width = 1800;
+texture.height = 1200;
+const textureContext = texture.getContext('2d');
 
-  uniform float u_time;
-  uniform float u_motion;
-  uniform float u_aspect;
-
-  varying vec2 v_uv;
-  varying float v_light;
-  varying float v_fold;
-
-  void main() {
-    float reach = smoothstep(0.0, 0.32, a_uv.x);
-    float t = u_time * 0.72;
-    float broad = sin(a_uv.x * 8.4 - t * 2.0 + a_uv.y * 1.25);
-    float cross = sin(a_uv.x * 15.0 - t * 2.75 - a_uv.y * 5.5);
-    float soft = sin(a_uv.y * 9.0 + t * 1.15 + a_uv.x * 3.0);
-    float wave = (broad * 0.065 + cross * 0.018 + soft * 0.010) * reach * u_motion;
-
-    vec2 cover = u_aspect > 1.5
-      ? vec2(1.0, u_aspect / 1.5)
-      : vec2(1.5 / u_aspect, 1.0);
-
-    vec2 p = (a_position * 2.0 - 1.0) * cover;
-    p.x += wave * 0.20;
-    p.y += wave * 0.54 + sin(a_uv.x * 5.2 - t) * 0.012 * reach * u_motion;
-
-    float perspective = 1.0 + wave * 0.28;
-    p *= perspective;
-
-    v_uv = a_uv;
-    v_fold = wave;
-    v_light = 0.86 + broad * 0.12 + cross * 0.045 + wave * 0.9;
-    gl_Position = vec4(p, wave * 0.15, 1.0);
-  }
-`;
-
-const fragmentSource = `
-  precision mediump float;
-
-  uniform sampler2D u_flag;
-  uniform float u_time;
-
-  varying vec2 v_uv;
-  varying float v_light;
-  varying float v_fold;
-
-  float grain(vec2 p) {
-    return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
-  }
-
-  void main() {
-    vec4 cloth = texture2D(u_flag, v_uv);
-    float weave = sin(v_uv.x * 2100.0) * sin(v_uv.y * 1350.0) * 0.012;
-    float noise = (grain(v_uv * 1800.0 + u_time * 0.015) - 0.5) * 0.018;
-    float sheen = pow(max(0.0, 1.0 - abs(v_fold) * 12.0), 7.0) * 0.045;
-    float light = clamp(v_light + weave + noise + sheen, 0.67, 1.16);
-    gl_FragColor = vec4(cloth.rgb * light, 1.0);
-  }
-`;
-
-function compile(type, source) {
-  const shader = gl.createShader(type);
-  gl.shaderSource(shader, source);
-  gl.compileShader(shader);
-  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-    throw new Error(gl.getShaderInfoLog(shader));
-  }
-  return shader;
-}
-
-const program = gl.createProgram();
-gl.attachShader(program, compile(gl.VERTEX_SHADER, vertexSource));
-gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fragmentSource));
-gl.linkProgram(program);
-if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-  throw new Error(gl.getProgramInfoLog(program));
-}
-gl.useProgram(program);
-
-function createMesh(columns = 120, rows = 80) {
-  const vertices = [];
-  const indices = [];
-
-  for (let y = 0; y <= rows; y += 1) {
-    for (let x = 0; x <= columns; x += 1) {
-      const u = x / columns;
-      const v = y / rows;
-      vertices.push(u, v, u, v);
-    }
-  }
-
-  for (let y = 0; y < rows; y += 1) {
-    for (let x = 0; x < columns; x += 1) {
-      const a = y * (columns + 1) + x;
-      const b = a + 1;
-      const c = a + columns + 1;
-      const d = c + 1;
-      indices.push(a, b, c, b, d, c);
-    }
-  }
-
-  return {
-    vertices: new Float32Array(vertices),
-    indices: new Uint16Array(indices),
-  };
-}
-
-const mesh = createMesh();
-const vertexBuffer = gl.createBuffer();
-gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
-gl.bufferData(gl.ARRAY_BUFFER, mesh.vertices, gl.STATIC_DRAW);
-
-const indexBuffer = gl.createBuffer();
-gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
-gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
-
-const stride = 4 * Float32Array.BYTES_PER_ELEMENT;
-const positionLocation = gl.getAttribLocation(program, 'a_position');
-const uvLocation = gl.getAttribLocation(program, 'a_uv');
-gl.enableVertexAttribArray(positionLocation);
-gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, stride, 0);
-gl.enableVertexAttribArray(uvLocation);
-gl.vertexAttribPointer(uvLocation, 2, gl.FLOAT, false, stride, 2 * Float32Array.BYTES_PER_ELEMENT);
-
-function drawStar(context, cx, cy, radius, rotation) {
-  context.beginPath();
+function drawStar(target, cx, cy, radius, rotation) {
+  target.beginPath();
   for (let point = 0; point < 10; point += 1) {
     const angle = rotation + (point * Math.PI) / 5;
     const length = point % 2 === 0 ? radius : radius * 0.382;
     const x = cx + Math.cos(angle) * length;
     const y = cy + Math.sin(angle) * length;
-    if (point === 0) context.moveTo(x, y);
-    else context.lineTo(x, y);
+    if (point === 0) target.moveTo(x, y);
+    else target.lineTo(x, y);
   }
-  context.closePath();
-  context.fill();
+  target.closePath();
+  target.fill();
 }
 
-function createFlagTexture() {
-  const flag = document.createElement('canvas');
-  flag.width = 1500;
-  flag.height = 1000;
-  const context = flag.getContext('2d');
-  const scale = 50;
+function buildFlagTexture() {
+  const unit = 60;
+  const red = textureContext.createLinearGradient(0, 0, texture.width, texture.height);
+  red.addColorStop(0, '#cf1d0d');
+  red.addColorStop(0.48, '#e92712');
+  red.addColorStop(1, '#c51609');
+  textureContext.fillStyle = red;
+  textureContext.fillRect(0, 0, texture.width, texture.height);
 
-  context.fillStyle = '#de2910';
-  context.fillRect(0, 0, flag.width, flag.height);
-  context.fillStyle = '#ffde00';
+  const glow = textureContext.createRadialGradient(360, 290, 0, 360, 290, 640);
+  glow.addColorStop(0, 'rgba(255, 107, 59, 0.19)');
+  glow.addColorStop(1, 'rgba(255, 107, 59, 0)');
+  textureContext.fillStyle = glow;
+  textureContext.fillRect(0, 0, texture.width, texture.height);
 
-  drawStar(context, 5 * scale, 5 * scale, 3 * scale, -Math.PI / 2);
+  textureContext.save();
+  textureContext.shadowColor = 'rgba(111, 28, 0, 0.28)';
+  textureContext.shadowBlur = 16;
+  textureContext.shadowOffsetY = 7;
+  textureContext.fillStyle = '#ffdf16';
+
+  drawStar(textureContext, 5 * unit, 5 * unit, 3 * unit, -Math.PI / 2);
 
   const large = { x: 5, y: 5 };
-  const smallStars = [
+  for (const small of [
     { x: 10, y: 2 },
     { x: 12, y: 4 },
     { x: 12, y: 7 },
     { x: 10, y: 9 },
-  ];
-
-  for (const star of smallStars) {
-    const towardLarge = Math.atan2(large.y - star.y, large.x - star.x);
-    drawStar(context, star.x * scale, star.y * scale, scale, towardLarge);
+  ]) {
+    drawStar(
+      textureContext,
+      small.x * unit,
+      small.y * unit,
+      unit,
+      Math.atan2(large.y - small.y, large.x - small.x),
+    );
   }
+  textureContext.restore();
 
-  return flag;
+  textureContext.globalAlpha = 0.1;
+  textureContext.fillStyle = '#fff';
+  for (let y = 1; y < texture.height; y += 3) {
+    textureContext.fillRect(0, y, texture.width, 0.45);
+  }
+  textureContext.globalAlpha = 1;
 }
 
-const texture = gl.createTexture();
-gl.activeTexture(gl.TEXTURE0);
-gl.bindTexture(gl.TEXTURE_2D, texture);
-gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, createFlagTexture());
-gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-gl.uniform1i(gl.getUniformLocation(program, 'u_flag'), 0);
+buildFlagTexture();
 
-const timeLocation = gl.getUniformLocation(program, 'u_time');
-const motionLocation = gl.getUniformLocation(program, 'u_motion');
-const aspectLocation = gl.getUniformLocation(program, 'u_aspect');
-const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+let width = 1;
+let height = 1;
+let pixelRatio = 1;
+let lastFrame = 0;
 
 function resize() {
-  const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-  const width = Math.max(1, Math.round(window.innerWidth * pixelRatio));
-  const height = Math.max(1, Math.round(window.innerHeight * pixelRatio));
+  pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+  width = Math.max(1, Math.round(window.innerWidth * pixelRatio));
+  height = Math.max(1, Math.round(window.innerHeight * pixelRatio));
   if (canvas.width !== width || canvas.height !== height) {
     canvas.width = width;
     canvas.height = height;
-    gl.viewport(0, 0, width, height);
   }
 }
 
-function render(milliseconds) {
+function smoothstep(value) {
+  return value * value * (3 - 2 * value);
+}
+
+function render(timestamp = 0) {
   resize();
-  gl.uniform1f(timeLocation, milliseconds / 1000);
-  gl.uniform1f(motionLocation, reducedMotion.matches ? 0 : 1);
-  gl.uniform1f(aspectLocation, canvas.width / canvas.height);
-  gl.drawElements(gl.TRIANGLES, mesh.indices.length, gl.UNSIGNED_SHORT, 0);
-  requestAnimationFrame(render);
+
+  if (reducedMotion.matches && lastFrame > 0) return;
+  lastFrame = timestamp;
+
+  const time = reducedMotion.matches ? 0.6 : timestamp / 1000;
+  // A slight viewport bleed keeps every edge covered while preserving the
+  // complete constellation on wide and tall screens.
+  const flagWidth = width * 1.06;
+  const flagHeight = height * 1.08;
+  const originX = (width - flagWidth) / 2;
+  const originY = (height - flagHeight) / 2;
+  const stripWidth = Math.max(3, Math.round(4 * pixelRatio));
+
+  context.fillStyle = '#8f1008';
+  context.fillRect(0, 0, width, height);
+
+  for (let x = 0; x < flagWidth; x += stripWidth) {
+    const u = x / flagWidth;
+    const reach = 0.32 + smoothstep(Math.min(1, u * 1.18)) * 0.68;
+    const broad = Math.sin(u * 12.2 - time * 1.45);
+    const detail = Math.sin(u * 27.5 - time * 2.05 + 0.8);
+    const drift = Math.sin(u * 6.1 - time * 0.78 - 0.5);
+    const fold = broad * 0.72 + detail * 0.19 + drift * 0.09;
+    const offsetY = fold * flagHeight * 0.033 * reach;
+    const stretch = 1 + Math.cos(u * 12.2 - time * 1.45) * 0.018 * reach;
+
+    const sourceX = (x / flagWidth) * texture.width;
+    const sourceWidth = Math.min(texture.width - sourceX, (stripWidth / flagWidth) * texture.width + 2);
+    const destinationX = originX + x;
+    const destinationY = originY + offsetY - (flagHeight * (stretch - 1)) / 2;
+
+    context.drawImage(
+      texture,
+      sourceX,
+      0,
+      sourceWidth,
+      texture.height,
+      destinationX,
+      destinationY,
+      stripWidth + 1,
+      flagHeight * stretch,
+    );
+
+    const light = Math.cos(u * 12.2 - time * 1.45) * 0.12 + Math.cos(u * 27.5 - time * 2.05) * 0.035;
+    if (light > 0) {
+      context.globalCompositeOperation = 'screen';
+      context.fillStyle = `rgba(255, 221, 186, ${light})`;
+    } else {
+      context.globalCompositeOperation = 'multiply';
+      context.fillStyle = `rgba(72, 7, 3, ${-light * 1.35})`;
+    }
+    context.fillRect(destinationX, destinationY, stripWidth + 1, flagHeight * stretch);
+    context.globalCompositeOperation = 'source-over';
+  }
+
+  const bloom = context.createRadialGradient(width * 0.28, height * 0.3, 0, width * 0.28, height * 0.3, Math.max(width, height) * 0.78);
+  bloom.addColorStop(0, 'rgba(255, 167, 104, 0.085)');
+  bloom.addColorStop(0.6, 'rgba(255, 93, 50, 0)');
+  bloom.addColorStop(1, 'rgba(38, 0, 0, 0.15)');
+  context.fillStyle = bloom;
+  context.fillRect(0, 0, width, height);
+
+  const vignette = context.createRadialGradient(width / 2, height / 2, Math.min(width, height) * 0.25, width / 2, height / 2, Math.max(width, height) * 0.72);
+  vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+  vignette.addColorStop(1, 'rgba(43, 0, 0, 0.22)');
+  context.fillStyle = vignette;
+  context.fillRect(0, 0, width, height);
+
+  if (!canvas.classList.contains('is-ready')) canvas.classList.add('is-ready');
+  if (!reducedMotion.matches) requestAnimationFrame(render);
 }
 
 window.addEventListener('resize', resize, { passive: true });
+reducedMotion.addEventListener?.('change', () => {
+  lastFrame = 0;
+  requestAnimationFrame(render);
+});
 requestAnimationFrame(render);
