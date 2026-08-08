@@ -1,0 +1,53 @@
+:root {
+  color-scheme: dark;
+  background: #7b1008;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #7b1008;
+}
+
+body {
+  position: fixed;
+  inset: 0;
+}
+
+#flag,
+.fallback {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+#flag {
+  opacity: 0;
+  animation: reveal 900ms ease-out forwards;
+}
+
+.fallback {
+  position: absolute;
+  inset: 0;
+  background: #de2910;
+}
+
+@keyframes reveal {
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #flag {
+    animation: none;
+    opacity: 1;
+  }
+}
